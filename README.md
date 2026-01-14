@@ -1,5 +1,7 @@
 # ZK Secret Santa 🎅🤫
 
+![Banner](images/banner.png)
+
 **A decentralized, verifiable, and privacy-preserving Secret Santa protocol powered by Zero-Knowledge Proofs.**
 
 > This project implements the protocol described in the paper [arXiv:2501.06515](https://arxiv.org/abs/2501.06515).
