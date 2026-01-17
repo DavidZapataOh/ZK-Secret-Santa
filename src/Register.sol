@@ -12,8 +12,10 @@ contract Register is Ownable {
     Poseidon2 public immutable HASHER;
     uint32 public immutable TREE_DEPTH;
     bool public frozen;
+    address public factory;
 
     mapping(address => bool) public isRegistered;
+    mapping(address => mapping(bytes32 => bool)) public eventLeader;
 
     error InvalidTreeDepth(uint32 treeDepth);
     error InvalidAddress();
@@ -42,6 +44,27 @@ contract Register is Ownable {
         bytes32Tree.setHashers(_hash2, _hash3);
     }
 
+    modifier isEventLeader(bytes32 _eventId) {
+        if (!eventLeader[msg.sender][_eventId]) revert InvalidAddress();
+        _;
+    }
+
+    modifier onlyFactory() {
+        if (msg.sender != factory) revert InvalidAddress();
+        _;
+    }
+
+    function setFactory(address _factory) external onlyOwner {
+        factory = _factory;
+    }
+
+    function setEventLeader(
+        bytes32 _eventId,
+        address _lead
+    ) external onlyFactory {
+        eventLeader[_lead][_eventId] = true;
+    }
+
     function register(address _participant) external {
         if (frozen) revert TreeIsFrozen();
         if (isRegistered[_participant])
@@ -50,19 +73,24 @@ contract Register is Ownable {
         isRegistered[_participant] = true;
 
         bytes32 key = _keyOf(_participant);
-        bytes32Tree.add(key, bytes32(uint256(1)));
+        bytes32 value = _valueOf(_participant);
+        bytes32Tree.add(key, value);
 
         emit ParticipantRegistered(_participant);
     }
 
-    function registerBatch(address[] calldata _participants) external {
+    function registerBatch(
+        address[] calldata _participants,
+        bytes32 _eventId
+    ) external isEventLeader(_eventId) {
         if (frozen) revert TreeIsFrozen();
         for (uint256 i = 0; i < _participants.length; i++) {
             address p = _participants[i];
             if (isRegistered[p]) revert ParticipantAlreadyRegistered(p);
             isRegistered[p] = true;
             bytes32 key = _keyOf(p);
-            bytes32Tree.add(key, bytes32(uint256(1)));
+            bytes32 value = _valueOf(p);
+            bytes32Tree.add(key, value);
             emit ParticipantRegistered(p);
         }
     }
@@ -97,6 +125,10 @@ contract Register is Ownable {
         bytes32 _key
     ) external view virtual returns (SparseMerkleTree.Node memory) {
         return bytes32Tree.getNodeByKey(_key);
+    }
+
+    function _valueOf(address a) internal view returns (bytes32) {
+        return bytes32(uint256(uint160(a)));
     }
 
     function _keyOf(address _participant) internal view returns (bytes32) {

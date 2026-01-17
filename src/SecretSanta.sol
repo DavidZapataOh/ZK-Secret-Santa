@@ -27,7 +27,6 @@ contract SecretSanta is Ownable {
     IVerifier public immutable verifierSender;
     IVerifier public immutable verifierReceiver;
 
-    address public immutable lead;
     uint32 public immutable commitmentsTreeDepth;
     uint256 public immutable eventNonce;
     bytes32 public immutable eventId;
@@ -40,9 +39,9 @@ contract SecretSanta is Ownable {
 
     mapping(address => bool) public commitmentUsed;
     mapping(address => bytes32) public commitmentOf;
-    mapping(bytes32 => bool) public nullifierUsed;
+    mapping(bytes32 => bool) public spentSenderNulls;
+    mapping(bytes32 => bool) public chosenSenderNulls;
     mapping(bytes32 => uint256) public senderIndexPlus1ByNulls; // 1-based index
-    mapping(address => bool) public senderDetermined;
     mapping(address => bool) public receiverDisclosed;
     mapping(bytes32 => bytes) public encryptedPayloadByNulls;
 
@@ -106,7 +105,6 @@ contract SecretSanta is Ownable {
 
         commitmentsTreeDepth = _commitmentsTreeDepth;
         status = EventStatus.COMMIT;
-        lead = _owner;
     }
 
     function advancePhase() external onlyOwner {
@@ -119,26 +117,6 @@ contract SecretSanta is Ownable {
         }
         emit PhaseAdvanced(status);
     }
-
-    /*function register(
-        uint256 _eventId,
-        address[] memory _participants
-    ) external {
-        Event storage e = events[_eventId];
-
-        if (e.status != EventStatus.ACTIVE) revert InvalidEventStatus(e.status);
-
-        if (_participants.length > e.maxParticipants)
-            revert InvalidMaxParticipants(_participants.length);
-
-        if (msg.sender == e.lead) {
-            // TODO: add participants to SMT
-            // _insert(raffleId, participant)
-        } else {
-            // TODO: add msg.sender to SMT
-            // _insert(raffleId, msg.sender)
-        }
-    }*/
 
     function commitSignature(bytes32 _H) external {
         if (status != EventStatus.COMMIT) revert InvalidEventStatus(status);
@@ -154,9 +132,12 @@ contract SecretSanta is Ownable {
         if (n.nodeType != SparseMerkleTree.NodeType.LEAF) {
             revert ParticipantNotRegistered(msg.sender);
         }
+        if (n.value != bytes32(uint256(uint160(msg.sender)))) {
+            revert ParticipantNotRegistered(msg.sender);
+        }
 
         // add signature commitment to SMT
-        _commitments.add(_H, bytes32(uint256(1)));
+        _commitments.add(_H, _H);
 
         emit Commited(msg.sender, _H, _commitments.getRoot());
     }
@@ -165,31 +146,35 @@ contract SecretSanta is Ownable {
         return _commitments.getRoot();
     }
 
+    function getCommitmentProof(
+        bytes32 _H
+    ) external view returns (SparseMerkleTree.Proof memory) {
+        return _commitments.getProof(_H);
+    }
+
     function senderDetermination(
         bytes calldata _proof,
         bytes32[] calldata _publicInputs
     ) external {
         if (status != EventStatus.SENDERS_DETERMINED)
             revert InvalidEventStatus(status);
-        if (senderDetermined[msg.sender]) revert SenderAlreadyDetermined();
 
-        if (_publicInputs.length != 5) revert InvalidPublicInputs();
+        if (_publicInputs.length != 6) revert InvalidPublicInputs();
 
         bytes32 r_ = _publicInputs[0];
-        bytes32 eventId_ = _publicInputs[1];
-        bytes32 rootP_ = _publicInputs[2];
-        bytes32 rootC_ = _publicInputs[3];
-        bytes32 nulls_ = _publicInputs[4];
+        bytes32 eventId_ = _eventIdFromHiLo(_publicInputs[1], _publicInputs[2]);
+        bytes32 rootP_ = _publicInputs[3];
+        bytes32 rootC_ = _publicInputs[4];
+        bytes32 nulls_ = _publicInputs[5];
 
         if (eventId_ != eventId) revert InvalidEventId(eventId_);
         if (rootP_ != participantsSMTRoot)
             revert InvalidParticipantsSMTRoot(rootP_);
         if (rootC_ != _commitments.getRoot())
             revert InvalidSignatureCommitmentSMTRoot(rootC_);
-        if (nullifierUsed[nulls_]) revert NullifierAlreadyUsed();
+        if (spentSenderNulls[nulls_]) revert NullifierAlreadyUsed();
 
-        nullifierUsed[nulls_] = true;
-        senderDetermined[msg.sender] = true;
+        spentSenderNulls[nulls_] = true;
 
         giftSenders.push(SenderEntry({r: r_, nulls: nulls_}));
         senderIndexPlus1ByNulls[nulls_] = giftSenders.length;
@@ -213,20 +198,32 @@ contract SecretSanta is Ownable {
         if (status != EventStatus.RECEIVERS_DISCLOSED)
             revert InvalidEventStatus(status);
 
+        if (!register.isRegistered(msg.sender))
+            revert ParticipantNotRegistered(msg.sender);
+
         if (receiverDisclosed[msg.sender]) revert ReceiverAlreadyDisclosed();
 
-        if (_publicInputs.length != 3) revert InvalidPublicInputs();
+        if (_publicInputs.length != 4) revert InvalidPublicInputs();
 
-        address receiver_ = address(uint160(uint256(_publicInputs[0])));
-        bytes32 eventId_ = _publicInputs[1];
-        bytes32 nulls_ = _publicInputs[2];
+        uint256 a = uint256(_publicInputs[0]);
+        if (a >> 160 != 0) revert InvalidAddress();
+        address receiver_ = address(uint160(a));
+        bytes32 eventId_ = _eventIdFromHiLo(_publicInputs[1], _publicInputs[2]);
+        bytes32 nulls_ = _publicInputs[3];
 
         if (eventId_ != eventId) revert InvalidEventId(eventId_);
-        if (nullifierUsed[nulls_]) revert NullifierAlreadyUsed();
+        if (chosenSenderNulls[nulls_]) revert NullifierAlreadyUsed();
         if (receiver_ != msg.sender) revert InvalidAddress();
 
-        receiverDisclosed[msg.sender] = true;
-        encryptedPayloadByNulls[nulls_] = encryptedPayload;
+        // check if receiver is in SMT
+        bytes32 key = register.keyOf(receiver_);
+        SparseMerkleTree.Node memory n = register.getNodeByKey(key);
+        if (n.nodeType != SparseMerkleTree.NodeType.LEAF) {
+            revert ParticipantNotRegistered(receiver_);
+        }
+        if (n.value != bytes32(uint256(uint160(receiver_)))) {
+            revert ParticipantNotRegistered(receiver_);
+        }
 
         uint256 idxPlus1 = senderIndexPlus1ByNulls[nulls_];
         if (idxPlus1 == 0) revert UnknownSenderNullifier();
@@ -235,6 +232,10 @@ contract SecretSanta is Ownable {
             revert InvalidProof();
         }
 
+        chosenSenderNulls[nulls_] = true;
+        receiverDisclosed[msg.sender] = true;
+        encryptedPayloadByNulls[nulls_] = encryptedPayload;
+
         emit ReceiverDisclosed(receiver_, nulls_, keccak256(encryptedPayload));
     }
 
@@ -242,6 +243,18 @@ contract SecretSanta is Ownable {
         bytes32 myNulls
     ) external view returns (bytes memory) {
         return encryptedPayloadByNulls[myNulls];
+    }
+
+    function _eventIdFromHiLo(
+        bytes32 hi,
+        bytes32 lo
+    ) internal pure returns (bytes32) {
+        uint256 hiU = uint256(hi);
+        uint256 loU = uint256(lo);
+        // each limb must fit in 128 bits
+        if (hiU >> 128 != 0) revert InvalidPublicInputs();
+        if (loU >> 128 != 0) revert InvalidPublicInputs();
+        return bytes32((hiU << 128) | loU);
     }
 
     function _hash2(bytes32 _x, bytes32 _y) internal view returns (bytes32) {

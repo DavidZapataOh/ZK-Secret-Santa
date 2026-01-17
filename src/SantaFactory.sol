@@ -41,7 +41,8 @@ contract SantaFactory is Ownable {
     }
 
     function createEvent(
-        uint32 _commitmentsTreeDepth
+        uint32 _commitmentsTreeDepth,
+        address _lead
     ) external returns (address eventAddr, bytes32 eventId) {
         if (!register.frozen()) revert RegistryNotFrozen();
 
@@ -62,6 +63,8 @@ contract SantaFactory is Ownable {
 
         eventById[eventId] = eventAddr;
         allEvents.push(eventAddr);
+
+        register.setEventLeader(eventId, _lead);
 
         emit EventCreated(msg.sender, eventId, eventAddr, nonce);
     }

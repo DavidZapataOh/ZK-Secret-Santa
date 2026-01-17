@@ -3,13 +3,13 @@ use poseidon::poseidon2::Poseidon2;
 global DEPTH: u32 = 20;
 
 pub fn smt_process_proof(
-    key: Field, // key = hash(value)
-    value: Field, // value = participant address or H
-    siblings: [Field; DEPTH], // siblings of the proof
-    depth_eff: u32 // depth of the proof
+    key: Field,
+    value: Field,
+    siblings: [Field; DEPTH],
+    depth_eff: u32
 ) -> Field {
-    let mut h = Poseidon2::hash([Poseidon2::hash([value], 1), value, Field::from(1)], 3); // h = hash(key, value, 1)
-    let bits: [u1; 254] = (Poseidon2::hash([value], 1)).to_le_bits(); // bits = hash(value).to_le_bits()
+    let mut h = Poseidon2::hash([key, value, Field::from(1)], 3);
+    let bits: [u1; 254] = key.to_le_bits();
 
     for j in 0..DEPTH { // for each level of the SMT
         let i = (DEPTH - 1 - j) as u32; // i = DEPTH - 1 - j
