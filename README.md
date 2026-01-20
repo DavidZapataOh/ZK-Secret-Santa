@@ -6,6 +6,10 @@
 
 > This project implements the protocol described in the paper [arXiv:2501.06515](https://arxiv.org/abs/2501.06515).
 
+> [!WARNING]
+> **This project is under active construction.** 🚧
+> The code has not been audited and should not be used in production environments.
+
 ## 📖 Overview
 
 Traditional Secret Santa games rely on a trusted third party (or a centralized server) to perform the shuffle and assign gift recipients. This introduces a single point of failure and potential privacy leaks—the organizer knows everything!
